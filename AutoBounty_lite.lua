@@ -10,17 +10,17 @@ repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPla
 
 -- ═══════════════ SETTINGS ═══════════════
 local CFG = {
-    LockTime = 90,            -- seconds on one target before switching
-    SkipTime = 30,            -- seconds to skip a player after a lock timeout
-    MaxStay = 360,            -- seconds on one server before hopping (when safe)
-    MinBounty = 3000000,      -- only hop to servers with at least this bounty
+    LockTime = 90,
+    SkipTime = 30,
+    MaxStay = 360,
+    MinBounty = 3000000,
     MinPlayers = 1,
     MaxPlayers = 12,
-    Weapon = "Melee",         -- ToolTip to hold: "Melee", "Sword", "Blox Fruit", "Gun"
+    Weapon = "Melee",
     SkillKeys = { "Z", "X", "C" },
     HoldTime = 0.1,
     Team = "Pirates",
-    SCRIPT_URL = "",          -- paste your hosted copy's raw URL to auto-run after a hop
+    SCRIPT_URL = "",
 }
 
 -- ═══════════════ SERVICES ═══════════════
@@ -120,71 +120,6 @@ local function noclip()
     end
 end
 
--- ═══════════════ FAST ATTACK (QuantumOnyx style) ═══════════════
-local Net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
-local reRegisterAttack = Net:RemoteEvent("RegisterAttack")
-local RegisterHit = Net:RemoteEvent("RegisterHit", true)
-
-pcall(function()
-    local CombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
-    if CombatUtil and CombatUtil.CanAttack and hookfunction then
-        hookfunction(CombatUtil.CanAttack, function() return true end)
-    end
-end)
-
-local BodyParts = {
-    "RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand",
-}
-
-local function getHits(radius)
-    radius = radius or 60
-    local hits = {}
-    local my = hrpOf()
-    if not my then return hits end
-    local partName = BodyParts[math.random(#BodyParts)]
-    if S.target and validTarget(S.target) then
-        local char = S.target.Character
-        if char then
-            local hrp = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
-            if hrp and (hrp.Position - my.Position).Magnitude <= radius then
-                local part = char:FindFirstChild(partName) or hrp
-                table.insert(hits, { char, part })
-            end
-        end
-    end
-    return hits
-end
-
-local function fastAttack()
-    local char = LP.Character
-    if not char then return end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
-    local tip = tool.ToolTip
-    if tip \~= "Melee" and tip \~= "Sword" and tip \~= "Blox Fruit" and tip \~= "Gun" then return end
-
-    if tip == "Blox Fruit" and tool:FindFirstChild("LeftClickRemote") then
-        pcall(function()
-            tool.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
-        end)
-        return
-    end
-
-    local hits = getHits(60)
-    if #hits == 0 then return end
-
-    pcall(function()
-        reRegisterAttack:FireServer(0)
-    end)
-
-    local firstPart = hits[1] and hits[1][2]
-    if firstPart and RegisterHit then
-        pcall(function()
-            RegisterHit:FireServer(firstPart, hits, nil, nil, tostring(LP.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15))
-        end)
-    end
-end
-
 -- ═══════════════ TARGETING ═══════════════
 local function validTarget(p)
     if not p or p == LP or not p.Parent then return false end
@@ -240,7 +175,7 @@ local function bountyAtRisk()
     if not ic or not ic.Visible then return false end
     local lbl = ic:IsA("TextLabel") and ic or ic:FindFirstChildWhichIsA("TextLabel", true)
     local txt = lbl and string.lower(lbl.Text) or ""
-    return string.find(txt, "risk") \~= nil
+    return string.find(txt, "risk") ~= nil
 end
 
 -- ═══════════════ MOVEMENT ═══════════════
@@ -299,7 +234,7 @@ end
 local function pickServer(list)
     local good, any = {}, {}
     for _, s in ipairs(list) do
-        if s.Job \~= game.JobId then
+        if s.Job ~= game.JobId then
             any[#any + 1] = s
             if s.Count >= CFG.MinPlayers and s.Count <= CFG.MaxPlayers and s.Bounty >= CFG.MinBounty then
                 good[#good + 1] = s
@@ -312,10 +247,9 @@ local function pickServer(list)
 end
 
 local function doHop()
-    -- caller has already set S.hopping = true
     local s = pickServer(fetchServers())
     if s then
-        if CFG.SCRIPT_URL \~= "" then
+        if CFG.SCRIPT_URL ~= "" then
             local src = 'loadstring(game:HttpGet("' .. CFG.SCRIPT_URL .. '"))()'
             if type(queue_on_teleport) == "function" then
                 pcall(queue_on_teleport, src)
@@ -395,6 +329,514 @@ local function step()
             return
         end
     end
+end
+
+-- ═══════════════ FAST ATTACK KILL AURA (Quantum Onyx port) ═══════════════
+local FastAttackSystem = nil
+do
+    local FA_Workspace = workspace
+    local FA_Enemies = FA_Workspace:WaitForChild("Enemies")
+    local FA_Remotes = ReplicatedStorage:WaitForChild("Remotes")
+    local FA_Modules = ReplicatedStorage:WaitForChild("Modules")
+    local FA_Net = FA_Modules:WaitForChild("Net")
+    local FA_Character = LP.Character or LP.CharacterAdded:Wait()
+    local FA_Humanoid = FA_Character:WaitForChild("Humanoid")
+    local FA_Root = FA_Character:WaitForChild("HumanoidRootPart")
+
+    LP.CharacterAdded:Connect(function(c)
+        FA_Character = c
+        FA_Humanoid = c:WaitForChild("Humanoid")
+        FA_Root = c:WaitForChild("HumanoidRootPart")
+    end)
+
+    local FA_CombatUtil = require(FA_Modules:WaitForChild("CombatUtil"))
+    local FA_CombatController = require(ReplicatedStorage.Controllers.CombatController)
+    local FA_Validator2 = FA_Remotes:WaitForChild("Validator2")
+    local FA_RegisterAttack = FA_Net:WaitForChild("RE/RegisterAttack")
+    local FA_ShootGunEvent = FA_Net:FindFirstChild("RE/ShootGunEvent")
+    local FA_RegisterHit = require(FA_Net):RemoteEvent("RegisterHit", true)
+
+    local FA_Obj = setmetatable({}, {
+        __index = {
+            BodyParts = { "RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand" },
+            LastCombo = 0,
+            ComboTime = 0,
+            GunDebounce = 0,
+            MaxHits = 2,
+            IgnoredTools = {},
+            OverheatData = {
+                Dragonstorm = { MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 500, Shooting = false },
+            },
+            ShootsPerTarget = { ["Dual Flintlock"] = 2 },
+            ShootStyles = {
+                ["Skull Guitar"] = "TAP",
+                Bazooka = "Position",
+                Cannon = "Position",
+                Dragonstorm = "Overheat",
+            },
+            RemoteFruits = { ["Blade-Blade"] = true, ["Gas-Gas"] = true },
+            NormalFruits = { ["Light-Light"] = true, ["Ice-Ice"] = true },
+        },
+    })
+
+    local FA_Cfg = {
+        FastSettings = "Fast Attack",
+        FastAttackDelay = 0,
+        attackmobs = true,
+        attackplayers = true,
+        AutoKillPlayerinTrial = false,
+        MasteryFarm = false,
+        HealthMob = 50,
+        DoubleAttack = false,
+        RemoveAnimationFast = false,
+    }
+
+    local function FA_IsReady(obj)
+        if not obj or not obj.Parent or not obj:IsDescendantOf(FA_Workspace) then return false end
+        if obj.Parent == FA_Workspace:FindFirstChild("Boats") or obj:GetAttribute("IsBoat") or obj.Name:find("Brigade") or obj.Name:find("Boat") or obj.Name:find("Ship") then
+            local hp = obj:FindFirstChild("Health")
+            if hp then
+                if hp:IsA("ValueBase") and hp.Value <= 0 then return false end
+                if type(hp.Value) == "number" and hp.Value <= 0 then return false end
+            end
+            local hum = obj:FindFirstChildOfClass("Humanoid") or obj:FindFirstChild("Humanoid")
+            if hum then
+                if hum:IsA("Humanoid") and hum.Health <= 0 then return false end
+                if hum:IsA("ValueBase") and hum.Value <= 0 then return false end
+            end
+            if obj:GetAttribute("Dead") == true or obj:GetAttribute("Sunk") == true then return false end
+            local engine = obj:FindFirstChild("Engine") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+            if not engine or engine.Position.Y < -15 then return false end
+            return true
+        end
+        if obj.Parent == FA_Workspace:FindFirstChild("SeaBeasts") then
+            local hp = obj:FindFirstChild("Health")
+            return hp and hp.Value > 0
+        end
+        local hum = obj:FindFirstChildOfClass("Humanoid")
+        local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+        return hum and hum.Health > 0 and root and true
+    end
+
+    local function FA_ShouldAttackPlayer(player)
+        local flag = not (player.Team == LP.Team and tostring(player.Team) == "Marines")
+        if flag then
+            flag = not (player:HasTag("Ally" .. LP.Name) or LP:HasTag("Ally" .. player.Name))
+        end
+        return flag
+    end
+
+    local FA_UpvalueResult = nil
+    pcall(function() FA_UpvalueResult = getupvalue(FA_CombatController.Attack, 9) end)
+
+    local FA_Tbl8 = {}
+
+    local function FA_Validator()
+        if not FA_UpvalueResult then
+            pcall(function() FA_UpvalueResult = getupvalue(FA_CombatController.Attack, 9) end)
+        end
+        if not FA_UpvalueResult then return 0, 0 end
+        local v19 = getupvalue(FA_UpvalueResult, 15)
+        local v20 = getupvalue(FA_UpvalueResult, 13)
+        local v21 = getupvalue(FA_UpvalueResult, 16)
+        local v22 = getupvalue(FA_UpvalueResult, 17)
+        local v23 = getupvalue(FA_UpvalueResult, 14)
+        local v24 = getupvalue(FA_UpvalueResult, 18)
+        local v25 = getupvalue(FA_UpvalueResult, 19)
+        if not v19 or not v20 or not v21 or not v22 or not v23 or not v24 or not v25 then return 0, 0 end
+        local n = ((v19 * v23 + v20 * v21) % v22 * v22 + v20 * v23) % v24
+        local n2 = math.floor(n / v22)
+        local n3 = n - n2 * v22
+        local n4 = v25 + 1
+        pcall(function()
+            setupvalue(FA_UpvalueResult, 15, n2)
+            setupvalue(FA_UpvalueResult, 13, n3)
+            setupvalue(FA_UpvalueResult, 19, n4)
+        end)
+        return math.floor(n / v24 * 16777215), n4
+    end
+
+    local function FA_PlayAnim()
+        pcall(function()
+            local eq = FA_Character:FindFirstChild("EquippedWeapon")
+            if not FA_Humanoid or not eq then return end
+            local cache = FA_CombatUtil:GetMovesetAnimCache(FA_Humanoid)
+            local wname = FA_CombatUtil:GetWeaponName(eq)
+            local anim = cache[FA_CombatUtil:GetPureWeaponName(wname) .. "-basic" .. math.random(1, #FA_CombatUtil:GetWeaponData(wname).Moveset.Basic)]
+            if anim and not FA_Cfg.RemoveAnimationFast then
+                anim:Play(0, 1, (anim:GetAttribute("SpeedMult") or 1) * 5)
+                anim.TimePosition = 0.01
+            end
+        end)
+    end
+
+    local function FA_MaxHits()
+        if FA_Root and FA_Root:FindFirstChild("Buddha") then return 10 end
+        return FA_Obj.MaxHits
+    end
+
+    local function FA_GetHits(skipMastery, radius)
+        local result = {}
+        local bodyPart = FA_Obj.BodyParts[math.random(#FA_Obj.BodyParts)]
+        radius = radius or 50
+        local refRoot = FA_Character and (FA_Character:FindFirstChild("HumanoidRootPart") or FA_Character.PrimaryPart)
+        if not refRoot then return result end
+        local maxHits = FA_MaxHits()
+        local candidates = {}
+
+        if FA_Cfg.attackmobs then
+            for i = 1, #FA_Enemies:GetChildren() do
+                local ent = FA_Enemies:GetChildren()[i]
+                if not ent:GetAttribute("IsBoat") and FA_IsReady(ent) then
+                    local entRoot = ent:FindFirstChild("HumanoidRootPart") or ent.PrimaryPart
+                    if entRoot then
+                        local dist = (entRoot.Position - refRoot.Position).Magnitude
+                        if dist <= radius then
+                            local skip = false
+                            if not skipMastery and FA_Cfg.MasteryFarm then
+                                local hum = ent:FindFirstChildOfClass("Humanoid")
+                                if hum and hum.Health / hum.MaxHealth <= FA_Cfg.HealthMob / 100 then
+                                    skip = true
+                                end
+                            end
+                            if not skip then
+                                local part = ent:FindFirstChild(bodyPart) or entRoot
+                                table.insert(candidates, { ent, part, dist })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if FA_Cfg.attackplayers and not LP:GetAttribute("PvpDisabled") then
+            local chars = FA_Workspace:FindFirstChild("Characters")
+            if chars then
+                for _, child in pairs(chars:GetChildren()) do
+                    if child ~= FA_Character then
+                        local plr = Players:GetPlayerFromCharacter(child)
+                        local shouldAttack
+                        if plr then
+                            shouldAttack = FA_Cfg.AutoKillPlayerinTrial or FA_ShouldAttackPlayer(plr)
+                        else
+                            shouldAttack = plr
+                        end
+                        if shouldAttack then
+                            local entRoot = child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
+                            if entRoot then
+                                local dist = (entRoot.Position - refRoot.Position).Magnitude
+                                if dist <= radius then
+                                    table.insert(candidates, { child, entRoot, dist })
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        table.sort(candidates, function(a, b) return a[3] < b[3] end)
+        for i = 1, math.min(#candidates, maxHits) do
+            table.insert(result, { candidates[i][1], candidates[i][2] })
+        end
+        return result
+    end
+
+    local function FA_FillTargets(radius, includePlayers, includeBoats)
+        FA_Tbl8 = {}
+        radius = radius or 500
+        local refChar = FA_Character
+        local refRoot
+        if refChar then
+            refRoot = refChar:FindFirstChild("HumanoidRootPart") or refChar.PrimaryPart
+        end
+        if not refRoot then return end
+        local found = {}
+
+        if includePlayers or FA_Cfg.attackmobs then
+            for _, child in ipairs(FA_Enemies:GetChildren()) do
+                local notBoat = not child:GetAttribute("IsBoat")
+                if notBoat and FA_IsReady(child) and child ~= refChar then
+                    local part = child.PrimaryPart or child:FindFirstChild("HumanoidRootPart")
+                    local plr = Players:GetPlayerFromCharacter(child)
+                    local inChars = child.Parent == FA_Workspace:FindFirstChild("Characters")
+                    if part and (not inChars or (plr and FA_ShouldAttackPlayer(plr))) then
+                        local dist = (refRoot.Position - part.Position).Magnitude
+                        if dist <= radius then
+                            table.insert(found, { child, part, dist })
+                        end
+                    end
+                end
+            end
+        end
+
+        if includePlayers or (FA_Cfg.attackplayers and not LP:GetAttribute("PvpDisabled")) then
+            local chars = FA_Workspace:FindFirstChild("Characters")
+            if chars then
+                for _, child in ipairs(chars:GetChildren()) do
+                    if child ~= refChar then
+                        local plr = Players:GetPlayerFromCharacter(child)
+                        local shouldAttack
+                        if plr then
+                            shouldAttack = FA_Cfg.AutoKillPlayerinTrial or FA_ShouldAttackPlayer(plr)
+                        else
+                            shouldAttack = plr
+                        end
+                        if shouldAttack then
+                            local entRoot = child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
+                            if entRoot then
+                                local dist = (refRoot.Position - entRoot.Position).Magnitude
+                                if dist <= radius then
+                                    table.insert(found, { child, entRoot, dist })
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if includeBoats then
+            local sb = FA_Workspace:FindFirstChild("SeaBeasts")
+            if sb then
+                for _, child in ipairs(sb:GetChildren()) do
+                    local part = child:FindFirstChildOfClass("MeshPart") or child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
+                    if FA_IsReady(child) and part then
+                        local dist = (refRoot.Position - part.Position).Magnitude
+                        if dist < radius then
+                            table.insert(found, { child, part, dist })
+                        end
+                    end
+                end
+            end
+            for _, child in ipairs(FA_Enemies:GetChildren()) do
+                if child:GetAttribute("IsBoat") then
+                    local part = child:FindFirstChildOfClass("MeshPart") or child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+                    if FA_IsReady(child) and part then
+                        local dist = (refRoot.Position - part.Position).Magnitude
+                        if dist < radius then
+                            table.insert(found, { child, part, dist })
+                        end
+                    end
+                end
+            end
+        end
+
+        table.sort(found, function(a, b) return a[3] < b[3] end)
+        for _, v in ipairs(found) do
+            table.insert(FA_Tbl8, { v[1], v[2] })
+        end
+    end
+
+    local function FA_GetFirst()
+        if #FA_Tbl8 == 0 then return nil, nil end
+        local v = FA_Tbl8[1]
+        if not v or not v[2] then return nil, nil end
+        return v[2].Position, v[2]
+    end
+
+    local function FA_GetNearest(radius)
+        FA_FillTargets(radius, true, true)
+        if #FA_Tbl8 > 0 and FA_Tbl8[1] and FA_Tbl8[1][2] then
+            return FA_Tbl8[1][2]
+        end
+        return nil
+    end
+
+    local FA_Handlers = {
+        ["Skull Guitar"] = function(tool, pos)
+            tool.RemoteEvent:FireServer("TAP", pos)
+        end,
+    }
+
+    local function FA_ShootGun()
+        local tool = FA_Character and FA_Character:FindFirstChildOfClass("Tool")
+        if not tool or tool.ToolTip ~= "Gun" then
+            local bp = LP:FindFirstChild("Backpack")
+            if bp then
+                for _, child in ipairs(bp:GetChildren()) do
+                    if child:IsA("Tool") and child.ToolTip == "Gun" then
+                        if FA_Character and FA_Character:FindFirstChildOfClass("Humanoid") then
+                            FA_Character.Humanoid:EquipTool(child)
+                            tool = child
+                            task.wait(0.05)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if not tool or not tool.Enabled then return end
+        tool.Enabled = true
+        tool:SetAttribute("IsReloading_Client", false)
+        tool:SetAttribute("LocalShotsLeft", 100)
+        tool:SetAttribute("LocalTotalShots", (tool:GetAttribute("LocalTotalShots") or 0) + 1)
+        local dist = 500
+        if FA_Obj.OverheatData[tool.Name] then dist = FA_Obj.OverheatData[tool.Name].Distance end
+
+        FA_FillTargets(dist, false, true)
+        if #FA_Tbl8 == 0 then
+            local nearest = FA_GetNearest(dist)
+            if nearest then
+                table.insert(FA_Tbl8, { nearest.Parent, nearest })
+            end
+        end
+        if #FA_Tbl8 == 0 then return end
+
+        local pos, part = FA_GetFirst()
+        if not pos or not part then return end
+
+        if FA_Handlers[tool.Name] then
+            FA_Handlers[tool.Name](tool, pos)
+            return
+        end
+
+        local style = FA_Obj.ShootStyles[tool.Name]
+        if not style then
+            style = tool:FindFirstChild("RemoteEvent") and "TAP" or "Normal"
+        end
+        local shots = FA_Obj.ShootsPerTarget[tool.Name] or 1
+
+        pcall(function()
+            local code, seq = FA_Validator()
+            FA_Validator2:FireServer(code, seq)
+            if tool:FindFirstChild("RemoteEvent") and (style == "TAP" or tool.Name == "Skull Guitar") then
+                tool.RemoteEvent:FireServer("TAP", pos)
+            elseif FA_ShootGunEvent then
+                for i = 1, shots do
+                    FA_ShootGunEvent:FireServer(pos, { part })
+                end
+            end
+        end)
+    end
+
+    local function FA_BloxFruitClick(combo, tool)
+        if not tool or not tool:FindFirstChild("LeftClickRemote") then return end
+        local root = FA_Character and FA_Character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local myPos = root.Position
+
+        for _, child in ipairs(FA_Enemies:GetChildren()) do
+            if FA_IsReady(child) and not child:GetAttribute("IsBoat") then
+                local part = child.PrimaryPart or child:FindFirstChild("HumanoidRootPart")
+                if part and (part.Position - myPos).Magnitude <= 60 then
+                    tool.LeftClickRemote:FireServer((part.Position - myPos).Unit, combo)
+                end
+            end
+        end
+
+        local sb = FA_Workspace:FindFirstChild("SeaBeasts")
+        if sb then
+            for _, child in ipairs(sb:GetChildren()) do
+                if FA_IsReady(child) then
+                    local part = child:FindFirstChildOfClass("MeshPart") or child.PrimaryPart
+                    if part and (part.Position - myPos).Magnitude <= 70 then
+                        tool.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+                    end
+                end
+            end
+        end
+    end
+
+    local function FA_FindFruitInBackpack()
+        local bp = LP:FindFirstChild("Backpack")
+        if not bp then return nil end
+        for _, child in ipairs(bp:GetChildren()) do
+            if child:IsA("Tool") and child.ToolTip == "Blox Fruit" and child:FindFirstChild("LeftClickRemote") then
+                return child
+            end
+        end
+        return nil
+    end
+
+    local function FA_Attack()
+        local tool = FA_Character and FA_Character:FindFirstChildOfClass("Tool")
+        local tooltip = tool and tool.ToolTip
+
+        if FA_Cfg.DoubleAttack then
+            local fruit = FA_FindFruitInBackpack()
+            if fruit and fruit:FindFirstChild("LeftClickRemote") then
+                pcall(function()
+                    fruit.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+                end)
+            end
+        end
+
+        if not tool then
+            if not FA_Cfg.DoubleAttack then return end
+            local fruit = FA_FindFruitInBackpack()
+            if not fruit then return end
+            tool = fruit
+            tooltip = "Blox Fruit"
+        end
+
+        if not table.find({ "Melee", "Blox Fruit", "Sword", "Gun" }, tooltip) then return end
+
+        if FA_Cfg.FastSettings == "Fast Attack" then
+            if tooltip == "Gun" then
+                FA_ShootGun()
+                return
+            end
+            local lcr = tool:FindFirstChild("LeftClickRemote")
+            local hits = FA_GetHits(tooltip == "Blox Fruit" and lcr ~= nil)
+
+            if tooltip == "Blox Fruit" and not FA_Obj.NormalFruits[tool.Name] and not FA_Obj.RemoteFruits[tool.Name] then
+                if tool:FindFirstChild("LeftClickRemote") and (FA_Cfg.DoubleAttack or FA_Character:FindFirstChildOfClass("Tool") == tool) then
+                    pcall(function()
+                        tool.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+                    end)
+                end
+            elseif tooltip == "Blox Fruit" and FA_Obj.RemoteFruits[tool.Name] then
+                local last = FA_Obj.LastCombo
+                local ct = FA_Obj.ComboTime
+                if tick() - ct > 0.65 then last = 0 end
+                local nextCombo
+                if last >= 5 then nextCombo = 1 else nextCombo = last + 1 end
+                FA_Obj.LastCombo = nextCombo
+                FA_Obj.ComboTime = tick()
+                if tool:FindFirstChild("LeftClickRemote") then
+                    FA_BloxFruitClick(nextCombo, tool)
+                end
+            else
+                FA_RegisterAttack:FireServer(FA_Cfg.FastAttackDelay or 0.3)
+                FA_PlayAnim()
+                local hitsArr = {}
+                local firstPart = nil
+                for _, hit in ipairs(hits) do
+                    if hit[1] and hit[2] then
+                        table.insert(hitsArr, hit)
+                        firstPart = firstPart or hit[2]
+                    end
+                end
+                if firstPart and FA_RegisterHit then
+                    FA_RegisterHit:FireServer(firstPart, hitsArr, nil, nil, tostring(LP.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15))
+                end
+            end
+
+            if FA_Cfg.DoubleAttack and tooltip == "Blox Fruit" then
+                local fruit = FA_FindFruitInBackpack()
+                if fruit and fruit ~= tool and fruit:FindFirstChild("LeftClickRemote") then
+                    if FA_Obj.RemoteFruits and FA_Obj.RemoteFruits[fruit.Name] then
+                        FA_BloxFruitClick(FA_Obj.LastCombo or 1, fruit)
+                    else
+                        pcall(function()
+                            fruit.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    FastAttackSystem = setmetatable({
+        Attack = FA_Attack,
+        ShootGun = FA_ShootGun,
+        GetHits = FA_GetHits,
+    }, {
+        __call = function(self)
+            return FA_Attack()
+        end,
+    })
 end
 
 -- ═══════════════ UI ═══════════════
@@ -560,17 +1002,18 @@ task.spawn(function()
     end
 end)
 
--- fast attack kill aura
+-- fast attack kill aura loop
 task.spawn(function()
     while S.running do
-        task.wait(0.03)
+        task.wait(0.1)
         pcall(function()
-            if not S.on or S.hopping or not S.target or not S.targetRoot or not S.targetRoot.Parent then return end
-            local my = hrpOf()
-            if not my then return end
-            if (S.targetRoot.Position - my.Position).Magnitude > 80 then return end
-            equipWeapon()
-            fastAttack()
+            if not S.on or S.hopping then return end
+            if not FastAttackSystem then return end
+            local c = LP.Character
+            if not c then return end
+            local h = c:FindFirstChildOfClass("Humanoid")
+            if not h or h.Health <= 0 then return end
+            FastAttackSystem()
         end)
     end
 end)
