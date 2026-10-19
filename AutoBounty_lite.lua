@@ -120,6 +120,71 @@ local function noclip()
     end
 end
 
+-- ═══════════════ FAST ATTACK (QuantumOnyx style) ═══════════════
+local Net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
+local reRegisterAttack = Net:RemoteEvent("RegisterAttack")
+local RegisterHit = Net:RemoteEvent("RegisterHit", true)
+
+pcall(function()
+    local CombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
+    if CombatUtil and CombatUtil.CanAttack and hookfunction then
+        hookfunction(CombatUtil.CanAttack, function() return true end)
+    end
+end)
+
+local BodyParts = {
+    "RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand",
+}
+
+local function getHits(radius)
+    radius = radius or 60
+    local hits = {}
+    local my = hrpOf()
+    if not my then return hits end
+    local partName = BodyParts[math.random(#BodyParts)]
+    if S.target and validTarget(S.target) then
+        local char = S.target.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+            if hrp and (hrp.Position - my.Position).Magnitude <= radius then
+                local part = char:FindFirstChild(partName) or hrp
+                table.insert(hits, { char, part })
+            end
+        end
+    end
+    return hits
+end
+
+local function fastAttack()
+    local char = LP.Character
+    if not char then return end
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return end
+    local tip = tool.ToolTip
+    if tip \~= "Melee" and tip \~= "Sword" and tip \~= "Blox Fruit" and tip \~= "Gun" then return end
+
+    if tip == "Blox Fruit" and tool:FindFirstChild("LeftClickRemote") then
+        pcall(function()
+            tool.LeftClickRemote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+        end)
+        return
+    end
+
+    local hits = getHits(60)
+    if #hits == 0 then return end
+
+    pcall(function()
+        reRegisterAttack:FireServer(0)
+    end)
+
+    local firstPart = hits[1] and hits[1][2]
+    if firstPart and RegisterHit then
+        pcall(function()
+            RegisterHit:FireServer(firstPart, hits, nil, nil, tostring(LP.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15))
+        end)
+    end
+end
+
 -- ═══════════════ TARGETING ═══════════════
 local function validTarget(p)
     if not p or p == LP or not p.Parent then return false end
@@ -175,7 +240,7 @@ local function bountyAtRisk()
     if not ic or not ic.Visible then return false end
     local lbl = ic:IsA("TextLabel") and ic or ic:FindFirstChildWhichIsA("TextLabel", true)
     local txt = lbl and string.lower(lbl.Text) or ""
-    return string.find(txt, "risk") ~= nil
+    return string.find(txt, "risk") \~= nil
 end
 
 -- ═══════════════ MOVEMENT ═══════════════
@@ -234,7 +299,7 @@ end
 local function pickServer(list)
     local good, any = {}, {}
     for _, s in ipairs(list) do
-        if s.Job ~= game.JobId then
+        if s.Job \~= game.JobId then
             any[#any + 1] = s
             if s.Count >= CFG.MinPlayers and s.Count <= CFG.MaxPlayers and s.Bounty >= CFG.MinBounty then
                 good[#good + 1] = s
@@ -250,7 +315,7 @@ local function doHop()
     -- caller has already set S.hopping = true
     local s = pickServer(fetchServers())
     if s then
-        if CFG.SCRIPT_URL ~= "" then
+        if CFG.SCRIPT_URL \~= "" then
             local src = 'loadstring(game:HttpGet("' .. CFG.SCRIPT_URL .. '"))()'
             if type(queue_on_teleport) == "function" then
                 pcall(queue_on_teleport, src)
@@ -491,6 +556,21 @@ task.spawn(function()
                 task.wait(0.3)
             end
             task.wait(0.4)
+        end)
+    end
+end)
+
+-- fast attack kill aura
+task.spawn(function()
+    while S.running do
+        task.wait(0.03)
+        pcall(function()
+            if not S.on or S.hopping or not S.target or not S.targetRoot or not S.targetRoot.Parent then return end
+            local my = hrpOf()
+            if not my then return end
+            if (S.targetRoot.Position - my.Position).Magnitude > 80 then return end
+            equipWeapon()
+            fastAttack()
         end)
     end
 end)
